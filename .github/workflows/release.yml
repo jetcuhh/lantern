@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build ${{ matrix.asset }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux-gnu
+            asset: lantern-x86_64-linux-gnu
+          - target: x86_64-linux-musl
+            asset: lantern-x86_64-linux-musl
+          - target: aarch64-linux-gnu
+            asset: lantern-aarch64-linux-gnu
+          - target: aarch64-linux-musl
+            asset: lantern-aarch64-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+
+      # Cross-compiling from the x86_64 runner works for every target: Zig
+      # bundles the libc headers and object stubs it needs.
+      - name: Build
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          zig build \
+            -Dtarget=${{ matrix.target }} \
+            -Doptimize=ReleaseFast \
+            -Dstrip=true \
+            --prefix dist/build
+          mv dist/build/bin/lantern dist/${{ matrix.asset }}
+          rm -rf dist/build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum lantern-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^pub const version = "\(.*\)";$/\1/p' src/main.zig)
+          if [ -z "$version" ]; then
+            echo "cannot read version from src/main.zig" >&2
+            exit 1
+          fi
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+            if [ "$tag" != "v$version" ]; then
+              echo "tag $tag does not match version v$version in src/main.zig" >&2
+              exit 1
+            fi
+          else
+            # Manual run: publish the version currently on the branch.
+            tag="v$version"
+          fi
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/lantern-* dist/SHA256SUMS --clobber
+          else
+            gh release create "$tag" dist/lantern-* dist/SHA256SUMS \
+              --title "$tag" \
+              --notes "lantern $version" \
+              --target "$GITHUB_SHA"
+          fi

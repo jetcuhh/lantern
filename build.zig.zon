@@ -1,0 +1,20 @@
+.{
+    .name = .lantern,
+    .version = "0.1.0",
+    .fingerprint = 0x2992851737ec662a,
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .ghostty = .{
+            .url = "git+https://github.com/ghostty-org/ghostty?ref=v1.4.0#83fb95624b0439ee660c2679b43b38c8b63769cd",
+            .hash = "ghostty-1.4.0-5UdBC-qohwWqLS0BImOz05t4hVyTwbaKslyTPvKYvAtE",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "test",
+        "bench",
+        "vendor",
+    },
+}
