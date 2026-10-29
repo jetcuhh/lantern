@@ -1,93 +1,121 @@
 #!/bin/sh
-# Install lantern on Linux from the latest GitHub release.
-#
-#   curl -fsSL https://raw.githubusercontent.com/jetcuhh/lantern/main/install.sh | sh
-#
-# Environment:
-#   LANTERN_VERSION      version to install, e.g. 0.2.0 (default: latest)
-#   LANTERN_INSTALL_DIR  where to put the binary (default: /usr/local/bin as
-#                        root, otherwise ~/.local/bin)
 
 set -eu
 
-repo=jetcuhh/lantern
-releases="https://github.com/$repo/releases"
+repo=jetcuhh/unn
+prefix=${PREFIX:-$HOME/.local}
+version=${VERSION:-latest}
 
-say() { printf 'lantern: %s\n' "$*"; }
-die() { printf 'lantern: %s\n' "$*" >&2; exit 1; }
+usage() {
+    cat <<'EOF'
+Install unn from a GitHub release.
 
-# --- platform ---------------------------------------------------------------
+  install.sh [--system] [--prefix DIR] [--version VER]
 
-[ "$(uname -s)" = Linux ] || die "only Linux is supported"
+  --system         install under /usr/local (needs write access)
+  --prefix DIR     install under DIR instead of ~/.local
+  --version VER    install a specific release instead of the latest
+  -h, --help       show this help
 
-machine=$(uname -m)
-case "$machine" in
+Environment: PREFIX, VERSION.
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case $1 in
+        --system) prefix=/usr/local ;;
+        --prefix)
+            shift
+            prefix=${1:?--prefix needs a directory}
+            ;;
+        --version)
+            shift
+            version=${1:?--version needs a version}
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "install: unknown argument: $1" >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+die() {
+    echo "install: $*" >&2
+    exit 1
+}
+
+for cmd in curl tar; do
+    command -v "$cmd" >/dev/null 2>&1 || die "missing required command: $cmd"
+done
+
+arch=$(uname -m)
+case $arch in
     x86_64 | amd64) arch=x86_64 ;;
-    aarch64 | arm64) arch=aarch64 ;;
-    *) die "unsupported architecture: $machine" ;;
+    *) die "release builds are x86_64 only; build from source instead" ;;
 esac
 
 libc=gnu
 if ldd --version 2>&1 | grep -qi musl; then
     libc=musl
-elif ls /lib/ld-musl-*.so.1 >/dev/null 2>&1; then
+elif [ -e "/lib/ld-musl-$arch.so.1" ] && [ ! -e /lib64/ld-linux-x86-64.so.2 ]; then
     libc=musl
 fi
 
-asset="lantern-$arch-linux-$libc"
-
-# --- download ---------------------------------------------------------------
-
-if command -v curl >/dev/null 2>&1; then
-    fetch() { curl -fsSL "$1" -o "$2"; }
-elif command -v wget >/dev/null 2>&1; then
-    fetch() { wget -qO "$2" "$1"; }
+if [ "$version" = latest ]; then
+    tag=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest") ||
+        die "cannot reach github"
+    tag=${tag##*/}
 else
-    die "curl or wget is required"
+    case $version in
+        v*) tag=$version ;;
+        *) tag=v$version ;;
+    esac
+fi
+[ -n "$tag" ] || die "cannot determine which release to install"
+ver=${tag#v}
+
+name=unn-$ver-linux-$arch-$libc
+base=https://github.com/$repo/releases/download/$tag
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+
+echo "downloading $name"
+curl -fsSL -o "$tmp/$name.tar.gz" "$base/$name.tar.gz" ||
+    die "no $libc build of $ver; see https://github.com/$repo/releases"
+
+if curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" 2>/dev/null &&
+    command -v sha256sum >/dev/null 2>&1; then
+    (cd "$tmp" && grep -F " $name.tar.gz" SHA256SUMS | sha256sum -c --status -) ||
+        die "checksum mismatch for $name.tar.gz"
 fi
 
-if [ -n "${LANTERN_VERSION:-}" ]; then
-    version=${LANTERN_VERSION#v}
-    url="$releases/download/v$version"
-else
-    version=latest
-    url="$releases/latest/download"
-fi
+tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
+src=$tmp/$name
+[ -x "$src/bin/unn" ] || die "malformed archive: bin/unn is missing"
 
-tmp=$(mktemp -d) || die "cannot create a temporary directory"
-trap 'rm -rf "$tmp"' EXIT INT TERM
+install_file() {
+    mkdir -p "$(dirname "$2")"
+    cp "$1" "$2.new.$$"
+    chmod "$3" "$2.new.$$"
+    mv -f "$2.new.$$" "$2"
+}
 
-say "downloading $asset ($version)"
-fetch "$url/$asset" "$tmp/$asset" || die "no release asset named $asset"
+install_file "$src/bin/unn" "$prefix/bin/unn" 755
+install_file "$src/share/applications/jet.unn.desktop" \
+    "$prefix/share/applications/jet.unn.desktop" 644
+install_file "$src/share/icons/hicolor/scalable/apps/jet.unn.svg" \
+    "$prefix/share/icons/hicolor/scalable/apps/jet.unn.svg" 644
+install_file "$src/share/man/man1/unn.1" "$prefix/share/man/man1/unn.1" 644
+install_file "$src/share/man/man5/unn.5" "$prefix/share/man/man5/unn.5" 644
+install_file "$src/share/doc/unn/examples/50-unn.conf" \
+    "$prefix/share/doc/unn/examples/50-unn.conf" 644
+install_file "$src/share/terminfo/u/unn" "$prefix/share/terminfo/u/unn" 644
 
-if command -v sha256sum >/dev/null 2>&1 && fetch "$url/SHA256SUMS" "$tmp/SHA256SUMS" 2>/dev/null; then
-    expected=$(awk -v name="$asset" '$2 == name { print $1 }' "$tmp/SHA256SUMS")
-    actual=$(sha256sum "$tmp/$asset" | awk '{ print $1 }')
-    [ -n "$expected" ] || die "$asset is not listed in SHA256SUMS"
-    [ "$actual" = "$expected" ] || die "checksum mismatch for $asset"
-    say "checksum ok"
-else
-    say "warning: could not verify the checksum"
-fi
-
-# --- install ----------------------------------------------------------------
-
-if [ -n "${LANTERN_INSTALL_DIR:-}" ]; then
-    dest=$LANTERN_INSTALL_DIR
-elif [ "$(id -u)" -eq 0 ]; then
-    dest=/usr/local/bin
-else
-    [ -n "${HOME:-}" ] || die "HOME is not set; set LANTERN_INSTALL_DIR"
-    dest=$HOME/.local/bin
-fi
-
-mkdir -p "$dest" || die "cannot create $dest"
-install -m 0755 "$tmp/$asset" "$dest/lantern" || die "cannot write $dest/lantern"
-
-"$dest/lantern" version >/dev/null 2>&1 || say "warning: $dest/lantern did not run"
-say "installed $asset to $dest/lantern"
-
-case ":$PATH:" in
-    *":$dest:"*) ;;
-    *) say "add $dest to PATH to run it by name" ;;
-esac
+echo
+echo "installed unn $ver ($libc) to $prefix"
