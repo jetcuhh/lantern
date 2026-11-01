@@ -8,7 +8,7 @@ version=${VERSION:-latest}
 
 usage() {
     cat <<'EOF'
-Install lantern from a GitHub release.
+Install the lantern binary from a GitHub release.
 
   install.sh [--system] [--prefix DIR] [--version VER]
 
@@ -49,21 +49,25 @@ die() {
     exit 1
 }
 
-for cmd in curl tar; do
+for cmd in curl; do
     command -v "$cmd" >/dev/null 2>&1 || die "missing required command: $cmd"
 done
 
 arch=$(uname -m)
 case $arch in
     x86_64 | amd64) arch=x86_64 ;;
-    *) die "release builds are x86_64 only; build from source instead" ;;
+    aarch64 | arm64) arch=aarch64 ;;
+    *) die "unsupported architecture: $arch (release builds: x86_64, aarch64); build from source instead" ;;
 esac
 
 libc=gnu
 if ldd --version 2>&1 | grep -qi musl; then
     libc=musl
-elif [ -e "/lib/ld-musl-$arch.so.1" ] && [ ! -e /lib64/ld-linux-x86-64.so.2 ]; then
-    libc=musl
+elif [ -e "/lib/ld-musl-$arch.so.1" ]; then
+    case $arch in
+        x86_64) [ -e /lib64/ld-linux-x86-64.so.2 ] || libc=musl ;;
+        aarch64) [ -e /lib/ld-linux-aarch64.so.1 ] || libc=musl ;;
+    esac
 fi
 
 if [ "$version" = latest ]; then
@@ -79,43 +83,30 @@ fi
 [ -n "$tag" ] || die "cannot determine which release to install"
 ver=${tag#v}
 
-name=lantern-$ver-linux-$arch-$libc
+name=lantern-$arch-linux-$libc
 base=https://github.com/$repo/releases/download/$tag
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 
-echo "downloading $name"
-curl -fsSL -o "$tmp/$name.tar.gz" "$base/$name.tar.gz" ||
-    die "no $libc build of $ver; see https://github.com/$repo/releases"
+echo "downloading $name ($tag)"
+curl -fsSL -o "$tmp/$name" "$base/$name" ||
+    die "no $libc build of $ver for $arch; see https://github.com/$repo/releases"
 
 if curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" 2>/dev/null &&
     command -v sha256sum >/dev/null 2>&1; then
-    (cd "$tmp" && grep -F " $name.tar.gz" SHA256SUMS | sha256sum -c --status -) ||
-        die "checksum mismatch for $name.tar.gz"
+    (cd "$tmp" && grep -F " $name" SHA256SUMS | sha256sum -c --status -) ||
+        die "checksum mismatch for $name"
 fi
 
-tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
-src=$tmp/$name
-[ -x "$src/bin/lantern" ] || die "malformed archive: bin/lantern is missing"
-
-install_file() {
-    mkdir -p "$(dirname "$2")"
-    cp "$1" "$2.new.$$"
-    chmod "$3" "$2.new.$$"
-    mv -f "$2.new.$$" "$2"
-}
-
-install_file "$src/bin/lantern" "$prefix/bin/lantern" 755
-install_file "$src/share/applications/jet.lantern.desktop" \
-    "$prefix/share/applications/jet.lantern.desktop" 644
-install_file "$src/share/icons/hicolor/scalable/apps/jet.lantern.svg" \
-    "$prefix/share/icons/hicolor/scalable/apps/jet.lantern.svg" 644
-install_file "$src/share/man/man1/lantern.1" "$prefix/share/man/man1/lantern.1" 644
-install_file "$src/share/man/man5/lantern.5" "$prefix/share/man/man5/lantern.5" 644
-install_file "$src/share/doc/lantern/examples/50-lantern.conf" \
-    "$prefix/share/doc/lantern/examples/50-lantern.conf" 644
-install_file "$src/share/terminfo/u/lantern" "$prefix/share/terminfo/u/lantern" 644
+mkdir -p "$prefix/bin"
+cp "$tmp/$name" "$prefix/bin/lantern.new.$$"
+chmod 755 "$prefix/bin/lantern.new.$$"
+mv -f "$prefix/bin/lantern.new.$$" "$prefix/bin/lantern"
 
 echo
-echo "installed lantern $ver ($libc) to $prefix"
+echo "installed lantern $ver ($arch, $libc) to $prefix/bin/lantern"
+case ":$PATH:" in
+    *":$prefix/bin:"*) ;;
+    *) echo "note: $prefix/bin is not on your PATH" ;;
+esac
