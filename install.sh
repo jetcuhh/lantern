@@ -2,13 +2,13 @@
 
 set -eu
 
-repo=jetcuhh/unn
+repo=jetcuhh/lantern
 prefix=${PREFIX:-$HOME/.local}
 version=${VERSION:-latest}
 
 usage() {
     cat <<'EOF'
-Install unn from a GitHub release.
+Install lantern from a GitHub release.
 
   install.sh [--system] [--prefix DIR] [--version VER]
 
@@ -79,7 +79,7 @@ fi
 [ -n "$tag" ] || die "cannot determine which release to install"
 ver=${tag#v}
 
-name=unn-$ver-linux-$arch-$libc
+name=lantern-$ver-linux-$arch-$libc
 base=https://github.com/$repo/releases/download/$tag
 
 tmp=$(mktemp -d)
@@ -97,7 +97,7 @@ fi
 
 tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
 src=$tmp/$name
-[ -x "$src/bin/unn" ] || die "malformed archive: bin/unn is missing"
+[ -x "$src/bin/lantern" ] || die "malformed archive: bin/lantern is missing"
 
 install_file() {
     mkdir -p "$(dirname "$2")"
@@ -106,16 +106,16 @@ install_file() {
     mv -f "$2.new.$$" "$2"
 }
 
-install_file "$src/bin/unn" "$prefix/bin/unn" 755
-install_file "$src/share/applications/jet.unn.desktop" \
-    "$prefix/share/applications/jet.unn.desktop" 644
-install_file "$src/share/icons/hicolor/scalable/apps/jet.unn.svg" \
-    "$prefix/share/icons/hicolor/scalable/apps/jet.unn.svg" 644
-install_file "$src/share/man/man1/unn.1" "$prefix/share/man/man1/unn.1" 644
-install_file "$src/share/man/man5/unn.5" "$prefix/share/man/man5/unn.5" 644
-install_file "$src/share/doc/unn/examples/50-unn.conf" \
-    "$prefix/share/doc/unn/examples/50-unn.conf" 644
-install_file "$src/share/terminfo/u/unn" "$prefix/share/terminfo/u/unn" 644
+install_file "$src/bin/lantern" "$prefix/bin/lantern" 755
+install_file "$src/share/applications/jet.lantern.desktop" \
+    "$prefix/share/applications/jet.lantern.desktop" 644
+install_file "$src/share/icons/hicolor/scalable/apps/jet.lantern.svg" \
+    "$prefix/share/icons/hicolor/scalable/apps/jet.lantern.svg" 644
+install_file "$src/share/man/man1/lantern.1" "$prefix/share/man/man1/lantern.1" 644
+install_file "$src/share/man/man5/lantern.5" "$prefix/share/man/man5/lantern.5" 644
+install_file "$src/share/doc/lantern/examples/50-lantern.conf" \
+    "$prefix/share/doc/lantern/examples/50-lantern.conf" 644
+install_file "$src/share/terminfo/u/lantern" "$prefix/share/terminfo/u/lantern" 644
 
 echo
-echo "installed unn $ver ($libc) to $prefix"
+echo "installed lantern $ver ($libc) to $prefix"
