@@ -693,7 +693,7 @@ pub fn appendTransmit(
 /// queue passes 8 MiB, so a screen full of large images must not be able
 /// to push the view over that line. Images past the budget are skipped
 /// (they reappear the next time the application draws them).
-pub const max_replay_bytes: usize = 2 * 1024 * 1024;
+pub const max_replay_bytes: usize = 6 * 1024 * 1024;
 
 /// Append commands that recreate every visible image and placement of the
 /// terminal's active screen, for a view that has just erased its display.

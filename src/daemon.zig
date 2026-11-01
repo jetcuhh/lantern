@@ -195,6 +195,9 @@ pub const Daemon = struct {
     /// The latest `env` payload from a client (see protocol.zig), applied
     /// to the environment of every tab created afterwards.
     client_env: ?[]u8 = null,
+    /// The tab list last sent (`<id>\t<title>\n` per tab), to notice
+    /// when a tab's folder changed and its title needs resending.
+    titles_sig: std.ArrayList(u8) = .empty,
 
     pub fn run(io: std.Io, alloc: std.mem.Allocator, opts: Options) !void {
         var self: Daemon = .{
@@ -250,6 +253,7 @@ pub const Daemon = struct {
         reap.terminateAll(self.alloc, leaders.items);
         for (self.tabs.items) |tab| self.destroyTab(tab);
         self.tabs.deinit(self.alloc);
+        self.titles_sig.deinit(self.alloc);
         for (self.conns.items) |c| {
             posix.close(c.fd);
             c.deinit();
@@ -326,7 +330,8 @@ pub const Daemon = struct {
                 try refs.append(self.alloc, .{ .tab = tab.id });
             }
 
-            _ = try posix.poll(fds.items, -1);
+            // Wake once a second to notice folder changes (see refreshTitles).
+            _ = try posix.poll(fds.items, 1000);
 
             for (fds.items, refs.items) |pfd, ref| {
                 if (pfd.revents == 0) continue;
@@ -367,6 +372,7 @@ pub const Daemon = struct {
 
             self.sweep();
             self.sweepTabs();
+            self.refreshTitles();
             // The session outlives its last tab: while any client is still
             // attached, stay up on the landing so a new tab can be opened.
             // It ends only once there is nothing left to keep alive: no
@@ -751,12 +757,33 @@ pub const Daemon = struct {
         tab.win.destroy();
     }
 
-    fn tabTitle(_: *Daemon, tab: *const Tab) []const u8 {
-        // A tab is named for the folder it was opened in. Application
-        // window titles (OSC 2) deliberately do not replace it: shells
-        // such as nushell restamp the title on every prompt, which would
-        // otherwise lose the folder name.
+    /// A tab is named for the folder its shell is in right now, so the
+    /// title follows `cd`. Application window titles (OSC 2)
+    /// deliberately do not replace it: shells such as nushell restamp
+    /// the title on every prompt, which would otherwise lose the folder
+    /// name. Falls back to the folder the tab opened in. The result may
+    /// point into `buf`.
+    fn tabTitle(_: *Daemon, tab: *const Tab, buf: []u8) []const u8 {
+        if (cwd.ofPid(buf, tab.win.child_pid)) |dir| {
+            const base = std.fs.path.basename(dir);
+            if (base.len > 0) return base;
+        }
         return tab.win.default_title;
+    }
+
+    /// Resend the tab list when any tab's title changed since the last
+    /// send (a shell changed directory).
+    fn refreshTitles(self: *Daemon) void {
+        var snap: std.ArrayList(u8) = .empty;
+        defer snap.deinit(self.alloc);
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        for (self.tabs.items) |*tab| {
+            snap.print(self.alloc, "{d}\t{s}\n", .{ tab.id, self.tabTitle(tab, &buf) }) catch return;
+        }
+        if (std.mem.eql(u8, snap.items, self.titles_sig.items)) return;
+        self.titles_sig.clearRetainingCapacity();
+        self.titles_sig.appendSlice(self.alloc, snap.items) catch return;
+        self.sendTabs();
     }
 
     /// Send each live view its own tab list. Payload:
@@ -773,9 +800,10 @@ pub const Daemon = struct {
         var out: std.ArrayList(u8) = .empty;
         defer out.deinit(self.alloc);
         out.print(self.alloc, "{d}\n", .{conn.active_id}) catch return;
+        var title_buf: [std.fs.max_path_bytes]u8 = undefined;
         for (self.tabs.items) |*tab| {
             out.print(self.alloc, "{d}\t", .{tab.id}) catch return;
-            for (self.tabTitle(tab)) |byte| {
+            for (self.tabTitle(tab, &title_buf)) |byte| {
                 if (byte < 0x20 or byte == 0x7f) continue;
                 out.append(self.alloc, byte) catch return;
             }

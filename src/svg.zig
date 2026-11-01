@@ -40,7 +40,7 @@ extern fn nsvgRasterize(
 
 /// Largest side of a rasterized image. Larger documents are scaled down
 /// to fit, keeping their aspect ratio.
-pub const max_side: u32 = 4096;
+pub const max_side: u32 = 1024;
 
 /// Documents larger than this are refused outright.
 pub const max_input: usize = 8 * 1024 * 1024;
