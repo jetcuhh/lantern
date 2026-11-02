@@ -13,6 +13,7 @@ const keys = @import("keys.zig");
 /// milliseconds; the probe returns as soon as the reply arrives, so this
 /// bound only delays the probe on a terminal that never answers.
 const probe_timeout_ms = 150;
+const probe_timeout_ssh_ms = 1500;
 
 pub fn connect(alloc: std.mem.Allocator, socket_path: []const u8) !posix.fd_t {
     _ = alloc;
@@ -45,7 +46,9 @@ pub fn probeBackground(
     // input fd. For the UI, stdout and stdin are the same tty.
     protocol.writeAll(posix.STDOUT_FILENO, "\x1b]11;?\x07") catch return null;
 
-    const deadline = posix.milliTimestamp() + probe_timeout_ms;
+    const over_ssh = posix.getenv("SSH_CONNECTION") != null or posix.getenv("SSH_TTY") != null;
+    const timeout_ms: i64 = if (over_ssh) probe_timeout_ssh_ms else probe_timeout_ms;
+    const deadline = posix.milliTimestamp() + timeout_ms;
     var len: usize = 0;
     while (len < scratch.len) {
         const now = posix.milliTimestamp();

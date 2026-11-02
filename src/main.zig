@@ -14,7 +14,7 @@ const protocol = @import("protocol.zig");
 const svg = @import("svg.zig");
 const ui = @import("ui.zig");
 
-pub const version = "0.1.0";
+pub const version = "0.2.0";
 
 /// Exit codes, documented in `lantern help`.
 const exit_runtime: u8 = 1;
@@ -153,8 +153,10 @@ fn launch(io: std.Io, alloc: std.mem.Allocator) !void {
         .listen => |fd| fd,
     };
 
+    const shell = parentShell(alloc);
+
     if (posix.getenv("LANTERN_FOREGROUND") != null) {
-        var opts: daemonpkg.Options = .{ .socket_path = sock, .listen_fd = listen_fd };
+        var opts: daemonpkg.Options = .{ .socket_path = sock, .listen_fd = listen_fd, .shell = shell };
         opts.rows = 24;
         opts.cols = 80;
         try daemonpkg.Daemon.run(io, alloc, opts);
@@ -162,10 +164,35 @@ fn launch(io: std.Io, alloc: std.mem.Allocator) !void {
     }
 
     const pid = try posix.fork();
-    if (pid == 0) runDaemon(io, alloc, sock, listen_fd);
+    if (pid == 0) runDaemon(io, alloc, sock, listen_fd, shell);
     posix.close(listen_fd);
 
     return runUi(io, alloc, sock);
+}
+
+fn parentShell(alloc: std.mem.Allocator) ?[]const u8 {
+    if (posix.getenv("SHELL")) |s| if (s.len > 0) return null;
+    var path_buf: [64]u8 = undefined;
+    const link = std.fmt.bufPrint(&path_buf, "/proc/{d}/exe", .{posix.getppid()}) catch return null;
+    var out: [std.fs.max_path_bytes]u8 = undefined;
+    const target = posix.readlink(link, &out) catch return null;
+    if (!isListedShell(target)) return null;
+    return alloc.dupe(u8, target) catch null;
+}
+
+fn isListedShell(path: []const u8) bool {
+    const fd = posix.open("/etc/shells", .{ .ACCMODE = .RDONLY }, 0) catch return true;
+    defer posix.close(fd);
+    var buf: [8192]u8 = undefined;
+    const n = posix.read(fd, &buf) catch return true;
+    const want = std.fs.path.basename(path);
+    var it = std.mem.splitScalar(u8, buf[0..n], '\n');
+    while (it.next()) |line| {
+        const t = std.mem.trim(u8, line, " \t\r");
+        if (t.len == 0 or t[0] == '#') continue;
+        if (std.mem.eql(u8, std.fs.path.basename(t), want)) return true;
+    }
+    return false;
 }
 
 /// Serialize "is there a session? start one" across concurrent launches
@@ -250,7 +277,7 @@ fn restoreStderr(saved: posix.fd_t) void {
     posix.close(saved);
 }
 
-fn runDaemon(io: std.Io, alloc: std.mem.Allocator, sock: []const u8, listen_fd: posix.fd_t) noreturn {
+fn runDaemon(io: std.Io, alloc: std.mem.Allocator, sock: []const u8, listen_fd: posix.fd_t, shell: ?[]const u8) noreturn {
     _ = posix.setsid() catch {};
 
     // Detach stdio: stdin and stdout go to /dev/null, stderr to the log
@@ -270,6 +297,7 @@ fn runDaemon(io: std.Io, alloc: std.mem.Allocator, sock: []const u8, listen_fd: 
     var opts: daemonpkg.Options = .{
         .socket_path = sock,
         .listen_fd = listen_fd,
+        .shell = shell,
     };
     opts.rows = 24;
     opts.cols = 80;

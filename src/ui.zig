@@ -25,6 +25,7 @@ const posix = @import("sys.zig");
 const vt = @import("ghostty-vt");
 
 const client = @import("client.zig");
+const clipboard = @import("clipboard.zig");
 const keys = @import("keys.zig");
 const kittygfx = @import("kitty.zig");
 const osc52 = @import("osc52.zig");
@@ -2506,6 +2507,7 @@ const Ui = struct {
         _ = encoder.encode(b64, text);
         seq.appendSlice(alloc, "\x07") catch return;
         protocol.writeAll(1, seq.items) catch {};
+        clipboard.copy(text);
     }
 
     fn sgrButton(m: Mouse) ?vt.input.MouseButton {

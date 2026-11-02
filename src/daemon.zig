@@ -38,6 +38,7 @@ pub const Options = struct {
     cols: u16 = 80,
     /// Working directory for the first tab; null inherits the daemon's.
     cwd: ?[]const u8 = null,
+    shell: ?[]const u8 = null,
 };
 
 /// Hard cap on a single connection's queued-but-unsent output. The
@@ -604,8 +605,13 @@ pub const Daemon = struct {
         self.applyClientEnv(&env);
         try env.put("TERM", "xterm-256color");
         try env.put("LANTERN", "1");
+        if ((env.get("COLORTERM") orelse "").len == 0) try env.put("COLORTERM", "truecolor");
 
-        var default_argv: [1][]const u8 = .{env.get("SHELL") orelse "/bin/sh"};
+        const shell: []const u8 = blk: {
+            if (env.get("SHELL")) |s| if (s.len > 0) break :blk s;
+            break :blk self.opts.shell orelse "/bin/sh";
+        };
+        var default_argv: [1][]const u8 = .{shell};
         const child_argv: []const []const u8 = if (argv.len > 0) argv else &default_argv;
 
         const win = try Window.create(self.io, self.alloc, child_argv, &env, rows, cols, cwd_opt);

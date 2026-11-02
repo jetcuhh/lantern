@@ -363,6 +363,10 @@ pub fn fork() !pid_t {
     return rc;
 }
 
+pub fn getppid() pid_t {
+    return c.getppid();
+}
+
 pub fn setsid() !pid_t {
     const rc = c.setsid();
     if (rc < 0) return unexpectedErrno(c.errno(rc));
